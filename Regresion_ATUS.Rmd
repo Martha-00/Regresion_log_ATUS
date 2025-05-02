@@ -1,0 +1,1125 @@
+---
+title: ''
+output:
+  pdf_document: default
+  word_document: default
+lang: es
+header-includes:
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+---
+
+---
+#######################
+# Portada
+#######################
+---
+
+\pagenumbering{gobble}
+
+```{r echo = FALSE, out.width = "90%", fig.align = 'center'}
+# Logo de CIMAT
+knitr::include_graphics("C:/Regresión_log_ATUS/INEGI.png")
+```
+
+\vspace{2cm}
+\begin{center}
+\huge \textbf{Modelo de regresión logística para accidentes de tránsito en zonas urbanas y suburbanas}
+\end{center}
+\vspace{5cm}
+
+\Large
+\huge\textbf{Elaboró:} Martha Aguilar Jiménez\
+\huge\textbf{Fecha:}\ Mayo de 2022
+\vspace{5cm}
+
+---
+#######################
+# Índice
+#######################
+---
+
+\pagebreak
+\tableofcontents
+
+---
+#######################
+# Cuerpo del documento
+#######################
+---
+
+\newpage
+\pagenumbering{arabic}
+
+## Introducción
+
+::: text-justify
+
+\normalsize
+La estadística de accidentes de tránsito terrestre en zonas urbanas y suburbanas (ATUS) es 
+un proyecto elaborado por el Instituto Nacional de Estadística y Geografía (INEGI), con el fin
+de proporcionar un panorama cuantitativo sobre la incidencia de percances viales en el ámbito 
+nacional, así como las consecuencias humanas y materiales que conllevan.
+
+El objetivo de este trabajo es implementar un modelo de regresión logística que permita pronosticar la probabilidad de que existan víctimas mortales en los accidentes de tránsito terrestre en zonas urbanas y suburbanas, mediante las variables incluidas en la base de datos de ATUS.
+El presente documento se organiza en 4 secciones. La sección 1 muestra la preparación de la base de datos, la siguiente contiene el análisis exploratorio de los datos. Posteriormente, la sección 3 presenta el ajuste del modelo de regresión logística con su respectivo análisis. Por último, la sección 4 cuenta con las conclusiones de este trabajo.
+
+\newpage
+## 1. Preparación de la base de datos
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# Limpiar la memoria
+rm(list = ls())
+
+# Se cargan las librerías de interés
+library(sqldf)
+library(ISLR2)
+library(dplyr)
+library(foreign)
+library(DescTools)
+library(dplyr)
+library(corrplot)
+library(car)
+library(bestglm)
+library(ciTools)
+library(xlsx)
+library(glmnet)
+
+# Establecer dirección de trabajo
+setwd("C:/Regresión_log_ATUS")
+
+# Se cargan los datos de interés
+# Bd<-read.dbf(file = "atus_20.DBF", as.is = FALSE)
+
+# Se carga el FD
+fd<-read.xlsx(file = "Información del proyecto.xlsx", sheetName = "FD")
+
+# Se carga la base de datos para el ajuste del modelo
+Tr<-read.xlsx(file = "Información del proyecto.xlsx", sheetName = "Base")
+
+# Se crea una copia de los datos para el análisis exploratorio
+Ae<-Tr
+
+# Se transforman las variables que deben ser factor
+Tr[, "EDO"]<-as.factor(Tr$EDO)
+Tr[, "MES"]<-as.factor(Tr$MES)
+Tr[, "HORA"]<-as.factor(Tr$HORA)
+Tr[, "DIASEMANA"]<-as.factor(Tr$DIASEMANA)
+Tr[, "URBANA"]<-as.factor(Tr$URBANA)
+Tr[, "SUBURBANA"]<-as.factor(Tr$SUBURBANA)
+Tr[, "TIPACCID"]<-as.factor(Tr$TIPACCID)
+Tr[, "CAUSAACCI"]<-as.factor(Tr$CAUSAACCI)
+Tr[, "CAPAROD"]<-as.factor(Tr$CAPAROD)
+Tr[, "SEXO"]<-as.factor(Tr$SEXO)
+Tr[, "ALIENTO"]<-as.factor(Tr$ALIENTO)
+Tr[, "CINTURON"]<-as.factor(Tr$CINTURON)
+
+# Datos de entrenamiento y de prueba
+n<-nrow(Tr)
+set.seed(20)
+muestra<-sample(1:n, size = round(0.75*n), replace = FALSE)
+entrenamiento<-Tr[muestra, ]
+prueba<-Tr[-muestra, ]
+
+```
+:::
+
+El **objetivo** de este proyecto es ajustar un modelo de regresión logística que permita pronosticar la probabilidad de que existan víctimas mortales en un accidente de tránsito, lo que denominaremos accidentes fatales de aquí en adelante, mediante la información de los accidentes de tránsito terrestre en zonas urbanas y suburbanas (ATUS) contenida en la página de INEGI.
+
+La base de datos ATUS cuenta con información para diferentes años. Para el presente estudio se utilizan la base más reciente, que corresponde al año 2020. Dicha base puede descargarse a través del siguiente enlace: 
+https://www.inegi.org.mx/programas/accidentes/#Microdatos 
+
+La base de datos de 2020 cuenta con 318,046 registros y 40 campos, los cuales se describen a continuación:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+options(knitr.kable.NA = "")
+knitr::kable(fd, caption = "Descripción de las variables", 
+             col.names = c("Nombre del campo", "Descripción", "Valores"))
+```
+
+El primer paso de la preparación de la base fue descartar a los registros con información no especificada (por lo general se representan con 9) o que en la variable TIPACCID son iguales a 0 (Certificado 0), ya que no cuentan con información y por lo tanto no aportan al ajuste del modelo de regresión logística. El código implementado en R para el filtrado de datos fue el siguiente:
+
+```{r message = FALSE, warning = FALSE, eval = FALSE}
+## Preparación de la base ##
+
+#Se limpia la memoria
+rm(list = ls())
+
+# Se cargan las librerías de interés
+library(foreign)
+
+# Se establece el directorio de trabajo
+setwd("C:/Regresión_log_ATUS")
+
+# Se cargan los datos de interés
+Bd<-read.dbf(file = "atus_20.DBF", as.is = FALSE)
+
+# Se eliminan los datos con no especificado en alguna de las variables o 0 en TIPACCID
+Tr<-Bd[((Bd$HORA %in% 99) | (Bd$MINUTOS %in% 99) | (Bd$DIA %in% 32) | 
+          (Bd$DIASEMANA %in% c(0, 8)) | (Bd$TIPACCID %in% 0) | 
+          (Bd$CAUSAACCI %in% 0) | (Bd$CAPAROD %in% 0) | (Bd$SEXO %in% 0) | 
+          (Bd$ALIENTO %in% c(0, 6)) | (Bd$CINTURON %in% c(0, 9)) | 
+          (Bd$EDAD %in% 99)) == FALSE, ]
+```
+
+Después de aplicar el filtro en la base de datos se obtuvieron 79,961 registros para los cuales se generó la **variable respuesta** "exito", la cual consiste en identificar si en el accidente de tránsito hubo alguna víctima mortal, ya sea conductor, pasajero, peatón, ciclista u otro tipo de involucrado. La generación de la variable respuesta se realizó mediante el siguiente código:
+
+```{r message = FALSE, warning = FALSE, eval = FALSE}
+## Preparación de la base ##
+Tr[, "exito"]<-ifelse((Tr$CONDMUERTO > 0) | (Tr$PASAMUERTO > 0) | 
+                        (Tr$PEATMUERTO > 0) | (Tr$CICLMUERTO > 0) | 
+                        (Tr$OTROMUERTO > 0), 1, 0)
+table(Tr$exito)
+```
+
+A partir de la variable anterior se contabilizaron 620 éxitos y 79,341 fracasos. Dado que el objetivo es implementar un modelo de regresión logística que permita pronosticar la probabilidad de identificar un accidente fatal y no la proporción o conteo de fallecidos en accidentes, se seleccionaron al azar 300 casos de éxitos y 200 para fracasos. El código implementado para la selección de los registros se muestra a continuación:
+
+```{r message = FALSE, warning = FALSE, eval = FALSE}
+# Se va a balancear el número de éxitos y fracasos de manera aleatoria
+Exito<-Tr[Tr$exito == 1, ]
+Fracaso<-Tr[Tr$exito == 0, ]
+set.seed(9959)
+Ntr<-rbind(Exito[sample(1:nrow(Exito), 300), ], Fracaso[sample(1:nrow(Fracaso), 200), ])
+```
+
+Los registros que se utilizaron para el estudio pueden consultarse en el archivo "Información del proyecto.xlsx", en la hoja con nombre "Base". Una vez que se cuenta con la base de datos para el ajuste del modelo de regresión logística, se procedió a realizar un análisis exploratorio de la información, el cual se muestra en la siguiente sección.
+
+\newpage
+## 2. Análisis exploratorio
+
+En el siguiente gráfico se presenta el porcentaje de accidentes fatales por grupos de horarios. En el gráfico se puede apreciar que, los mayores porcentajes de accidentes fatales se tienen en los horarios de 19 a 22 hrs, de 6 a 10 hrs y 15 a 18 hrs con un 23%, 21% y 20% respectivamente, en contraste con el resto de los horarios que cuentan cada uno de ellos con el 12% en promedio.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de la variable HORA"}
+
+# Se convierte a numérica la variable HORA
+Ae[, "HORA"]<-as.numeric(Ae$HORA)
+# Se crea la consulta
+consulta<-sqldf('SELECT *, CASE 
+                           WHEN HORA >= 19 AND HORA <= 22 THEN "19-22"
+                           WHEN HORA >= 15 AND HORA <= 18 THEN "15-18"
+                           WHEN HORA >= 11 AND HORA <= 14 THEN "11-14"
+                           WHEN HORA >=  6 AND HORA <= 10 THEN "06-10"
+                           WHEN HORA >=  2 AND HORA <=  5 THEN "02-05"
+                           ELSE "23-02"
+                           END AS HORA_C
+                 FROM Ae')
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, HORA_C, COUNT(exito) as CONTEO
+             FROM consulta
+             WHERE exito = 1
+             GROUP BY exito, HORA_C')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$HORA_C, col = "#69b3a2",
+        horiz = T, las = 1, xlab = "Porcentaje", ylab = "Horarios", 
+        main = "Porcentaje de accidentes fatales por horarios", xlim = c(0, 25))
+box()
+
+```
+
+La siguiente gráfica muestra los grupos de edad del responsable del accidente fatal. 
+En el grupo de edad de 16 a 30 años es donde se presenta el mayor porcentaje de accidentes fatales, con un 40.6%, en contraste con el grupo de edad de 15 o menos, el cual cuenta con el 1.7%. 
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de la variable EDAD"}
+
+# Se crea la consulta
+consulta<-sqldf('SELECT *, CASE 
+                           WHEN EDAD <= 15 THEN "15 o menos"
+                           WHEN EDAD >= 16 AND EDAD <= 30 THEN "16-30"
+                           WHEN EDAD >= 31 AND EDAD <= 45 THEN "31-45" 
+                           WHEN EDAD >= 46 AND EDAD <= 60 THEN "46-60" 
+                           ELSE "61 o más"
+                           END AS EDAD_C
+                 FROM Ae')
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, EDAD_C, COUNT(exito) as CONTEO
+             FROM consulta
+             WHERE exito = 1
+             GROUP BY exito, EDAD_C')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$EDAD_C, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Edad del responsable del accidente fatal", 
+        main = "Porcentaje de personas responsables por edad", ylim = c(0, 45))
+box()
+
+```
+
+\newpage
+La próxima gráfica muestra los accidentes fatales según la entidad federativa de ocurrencia.
+Como se aprecia en la gráfica, Sonora (clave 26) es la entidad federativa con más accidentes fatales, representando casi la quinta parte (17.6%) de accidentes fatales. Los siguientes estados con más accidentes fatales son Jalisco (clave 14) y Michoacán (clave 16) con el 11.3% y 7.3%, respectivamente.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de la variable EDO"}
+
+# Se hace numérica la variable EDO
+Ae[, "EDO"]<-as.numeric(Ae$EDO)
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, EDO, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, EDO
+             ORDER BY EDO')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$EDO, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Clave de entidad federativa", 
+        main = "Porcentaje de accidentes fatales por estado", ylim = c(0, 20))
+box()
+
+```
+
+En la siguiente gráfica se muestra el porcentaje de accidentes fatales por tipo de accidente. En el gráfico se aprecia que, los mayores porcentajes de accidentes fatales se presentan cuando existe una colisión con motocicleta, con un peatón o con vehículo automotor, también cuando existe una volcadura, cada uno de estos tipos cuenta con el 17% de los accidentes fatales. 
+Los menores porcentajes se presentan cuando existe una colisión con ferrocarril o con algún animal (0.3% y 1% respectivamente).
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de la variable TIPACCID"}
+
+# Se hace numérica la variable TIPACCID
+Ae[, "TIPACCID"]<-as.numeric(Ae$TIPACCID)
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, TIPACCID, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, TIPACCID
+             ORDER BY TIPACCID')
+
+# Se crea el gráfico de barras
+nombre<-c("C. automot.", "C. peatón", "C. animal",
+          "C. objeto", "Volcadura", "C. Pasajero",
+          "Salida cam.", "C. ferro.",
+          "C. moto", "C. ciclista", "Otro")
+barplot(height = prop$CONTEO*100/300, cex.names = 0.68,
+        names = nombre, col = "#69b3a2",
+        horiz = T, las = 1, xlab = "Porcentaje", ylab = "", 
+        main = "Porcentaje de accidentes fatales por tipo de accidente", xlim = c(0, 20))
+box()
+
+```
+
+\newpage
+
+En la siguiente gráfica se muestra el porcentaje según el tipo de zona urbana. Como se aprecia en el gráfico, poco más de la mitad de los accidentes fatales ocurren en una intersección (54%) y dos quintas partes de los siniestros con muertos ocurren en zonas suburbanas (39%); el resto (7%) ocurre en una no intersección.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de la variable URBANA"}
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, URBANA, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, URBANA
+             ORDER BY URBANA')
+
+# Se crea el gráfico de barras
+nombre<-c("Zona suburbana", "En intersección", "No intersección")
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = nombre, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Zona urbana", 
+        main = "Porcentaje de accidentes según zona urbana", ylim = c(0, 60))
+box()
+
+```
+
+Los siguientes gráficos contienen el porcentaje de accidentes fatales según el uso del cinturón de seguridad y si el responsable del accidente tenía aliento alcohólico. En el gráfico del uso de cinturón de seguridad se aprecia que, el 60% de los accidentes fatales no utilizaron cinturón de seguridad, mientras que, en el 86% de los casos, el responsable no tenía aliento alcohólico.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '32%', fig.align = "center", fig.cap = "Análisis de las variables CINTURON y ALIENTO"}
+par(mfrow = c(1, 2))
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, CINTURON, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, CINTURON
+             ORDER BY CINTURON')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = c("Sí", "No"), col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Uso de cinturón de seguridad", 
+        main = "Uso de cinturón", ylim = c(0, 90))
+box()
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, ALIENTO, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, ALIENTO
+             ORDER BY ALIENTO')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = c("Sí", "No"), col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Aliento alcohólico", 
+        main = "Aliento alcohólico", ylim = c(0, 90))
+box()
+```
+
+Una vez que se realizó el análisis exploratorio, se concluye que, existen variables en donde ocurre una mayor cantidad de accidentes fatales en comparación con la misma categoría de la variable, por ejemplo TIPACCID, EDAD, EDO, entre otras. La siguiente parte del análisis consiste en el ajuste del modelo de regresión logística, el cual se muestra en la siguiente sección.
+
+\newpage 
+## 3. Ajuste del modelo de regresión logística
+
+### 3.1 Ajuste inicial del modelo 
+
+Con la intención de realizar un comparativo del error de predicción entre un modelo lineal multivariado y un modelo con regularización LASSO, se dividió la base en 75% para datos de entrenamiento y el 25% restante para calcular el error de predicción (datos de prueba). El código implementado en R para la división de los datos puede consultarse al final del documento.
+
+Recordando que la variable respuesta es el campo "exito" (1 = Accidente fatal, 0 = Accidente no fatal), se comenzó con el ajuste del modelo de regresión para determinar si al menos una de las variables predictoras está relacionada con la variable respuesta. Es importante mencionar que, se excluye a la variable SUBURBANA, ya que es una subcategoría del campo URBANA y hace que estas variables predictoras sean dependientes, lo que implica problemas en la estimación de los coeficientes de regresión.
+
+Las variables consideradas como predictoras fueron: EDO, MES, HORA, DIASEMANA, URBANA, TIPACCID, CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON y EDAD. El resto de las variables no fueron incluidas, debido a que TIPACCID se clasifica a partir de las variables AUTOMOVIL, CAMPASAJ, MICROBUS, PASCAMION, OMNIBUS, TRANVIA, CAMIONETA, CAMION, TRACTOR, FERROCARRI, MOTOCICLET, BICICLETA y OTROVEHIC,  otras 5 variables se utilizaron para la definición de la variable respuesta y el resto está relacionada con víctimas heridas.
+
+Para esta prueba se utiliza un nivel de significancia de 0.05 ($\alpha = 0.05$). Las hipótesis son las siguientes:
+
+$H_{o}: \beta_{i} = 0$ dado que $\beta_{0} \neq 0$ para i = 1, 2, ..., 88
+
+$H_{a}:$ Al menos un coeficiente $\beta_{i}$ es diferente de 0. Dado que $\beta_{0} \neq 0$
+
+Esta prueba se hace a través de la diferencia de las dos devianzas (nula - residual), la cual posee una distribución chi-cuadrada con p grados de libertad, donde p es el número de parámetros del modelo sin contar el intercepto. La salida de R fue la siguiente:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# Se realizan los conteos
+conteo<-sqldf('SELECT EDO, MES, HORA, DIASEMANA, URBANA, TIPACCID,
+CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento
+GROUP BY EDO, MES, HORA, DIASEMANA, URBANA, TIPACCID,
+CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD')
+
+# Se ajusta el modelo logístico
+modelo<-glm(cbind(conteo$exitos, conteo$fracasos) ~ EDO + MES + HORA + DIASEMANA + URBANA + TIPACCID +
+CAUSAACCI + CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# ¿Al menos alguna variable está relacionada con la respuesta?
+dif_dev<-modelo$null.deviance - modelo$deviance
+gl<-modelo$df.null - modelo$df.residual
+valor_p<-pchisq(dif_dev, df = gl, lower.tail = FALSE)*2
+modelo_r2<-1 - modelo$deviance/modelo$null.deviance
+summary(modelo)
+
+# Análisis de multicolinealidad
+# Modelo 2 sin la variable HORA
+# Se ajusta el modelo logístico
+modelo_2<-glm(cbind(conteo$exitos, conteo$fracasos) ~ EDO + MES + DIASEMANA + URBANA + TIPACCID +
+CAUSAACCI + CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# Modelo 3 sin la variable HORA y EDO
+# Se ajusta el modelo logístico
+modelo_3<-glm(cbind(conteo$exitos, conteo$fracasos) ~ MES + DIASEMANA + URBANA + TIPACCID +
+CAUSAACCI + CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# Valores VIF
+Valores<-vif(modelo)
+Valores_2<-vif(modelo_2)
+Valores_3<-vif(modelo_3)
+
+```
+
+Al calcular la diferencia de las devianzas se obtiene un valor de `r dif_dev`, este estadístico de prueba tiene una distribución chi-cuadrada con `r gl` grados de libertad. La regla de decisión es rechazar $H_o$ si el valor p es menor que el nivel de significancia. En este caso, el valor p para esta prueba es de `r valor_p`, lo cual es menor al nivel de significancia establecido ($\alpha = 0.05$), lo que implica que se rechace $H_o$, es decir, tenemos suficiente evidencia para determinar que sí existe relación entre la variable respuesta y al menos una de las variables predictoras.
+
+Con respecto a la prueba individual para las variables predictoras, cuando se modelan en conjunto todas las seleccionadas, los niveles 4, 7, 9 y 10 de la variable MES, los niveles 5, 6, 8, 12 a 15 y 17 a 19 de la variable HORA, las categorías 2, 3 y 6 de DIASEMANA, las clases 1 y 2 de la variable URBANA, los niveles 4 a 6, 10 y 12 de la variable TIPACCID tienen un nivel de significancia de a lo mucho de 0.05, es decir, son significativas para el modelo ajustado.
+
+Por otro lado, al obtener el coeficiente de determinación ($R^{2}$) mediante $1 - \frac{deviance}{null.deviance}$, éste arroja un valor de `r modelo_r2`, es decir, aproximadamente el `r round(modelo_r2*100, 2)`% de la variación en la variable de respuesta, se debe a las variables predictoras del modelo que se ha ajustado.
+
+\newpage
+
+### 3.2 Análisis de multicolinealidad 
+
+La siguiente parte del análisis consistió en determinar si hay problemas de multicolinealidad, para ello, se calculó la matriz de correlaciones y los valores VIF del modelo inicial ajustado.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '90%', out.height = '90%', fig.align = "center", fig.cap = "Matriz de correlaciones lineales de Pearson"}
+
+# Variables de interés
+Interes<-c("exito", "EDO", "MES", "HORA", "DIASEMANA", "URBANA", "TIPACCID", 
+           "CAUSAACCI", "CAPAROD", "SEXO", "ALIENTO", "CINTURON", "EDAD")
+ent_mat<-sapply(entrenamiento[, Interes], function(x) as.numeric(x))
+
+# Se crea la matriz de correlaciones y se gráfica
+corrplot(cor(ent_mat), method = "number", type = "lower", number.cex = 0.5,
+         tl.col = "black", col = COL1('YlOrBr', 200), tl.cex = 0.8, title = "Correlaciones lineales", 
+         mar = c(0, 0, 1, 0))
+
+```
+
+Como se observa en la gráfica, ninguna variable tiene correlación mayor a 0.8, no obstante, las variables HORA y EDO tienen valores VIF que sobrepasan por mucho el valor de 10 (ver gráfico 1 de la figura 8). Estas variables tienen una correlación con la variable respuesta de 0.05 y de 0.07, respectivamente; la correlación lineal entre ellas es de 0. Dado que, HORA tiene una menor correlación con la variable respuesta, se optó por removerla del modelo y realizar nuevamente el ajuste sin considerar a dicha variable.
+
+Al ajustar el modelo removiendo la variable HORA y calcular nuevamente los VIF, en el segundo gráfico de la figura 8 se puede observar que, las variables EDO, MES y TIPACCID sobrepasan el valor de 10, siendo EDO la que cuenta con un valor mucho más alto en comparación con las otras dos. Debido a lo anterior, se decidió se remover la variable EDO y realizar nuevamente el ajuste del modelo sin incluir esta variable, además de HORA.
+
+Finalmente, al remover HORA y EDO del modelo y calcular nuevamente los VIF, podemos observar en el tercer gráfico de la figura 8, que ninguna variable predictora excede el valor de 10 en cuanto al VIF, ni se tienen variables que tengan valores cercanos a éste, siendo TIPACCID (VIF = `r sort(Valores_3[, 1], decreasing = TRUE)[1]`) la que presenta el mayor valor en VIF. En conclusión, se remueven las variables HORA y EDO del modelo por problemas de multicolinealidad.
+
+\newpage
+\blandscape
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '100%', out.height = '100%', fig.align = "center", fig.cap = "Valores VIF para diferentes modelos"}
+
+# Se crea la ventana de 1X3
+par(mfrow = c(1, 3))
+
+# Se crea un barplot del modelo inicial
+barplot(Valores[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", main = "Modelo 1")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+# Se crea un barplot del modelo 2
+barplot(Valores_2[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", main = "Modelo 2")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+# Se crea un barplot del modelo 3
+barplot(Valores_3[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", xlim = c(0, 12), main = "Modelo 3")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+```
+\elandscape
+
+\newpage
+
+### 3.3 Selección de variables 
+
+Posteriormente, se seleccionó el mejor modelo resultante de la búsqueda del mejor subconjunto usando 
+el criterio de información de Akaike (AIC), ya que se requiere un modelo con mayor poder predictivo. Los 5 mejores modelos seleccionados con este criterio se muestran a continuación:
+
+\footnotesize
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# Seleccionar el mejor subconjunto de variables
+x<-entrenamiento %>% select(c(MES, DIASEMANA, URBANA, TIPACCID, 
+                                CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD))
+# La variable respuesta debe ir al final
+y <- entrenamiento %>% select(exito) 
+xy <- cbind(x,y)
+
+# Seleccionar los 5 mejores modelos
+# Se usa la función bestglm (usando AIC), mejor poder predictivo.
+glm_com<-bestglm(Xy = xy, family = binomial, IC = "AIC", method = "exhaustive")
+# Se listan los 5 mejores modelos
+mod_5<-glm_com$BestModels
+
+# Se crea la tabla resumen
+tabla<-as.data.frame(mod_5)
+names(tabla)<-c(names(tabla)[-length(names(tabla))], "AIC")
+tabla[tabla == TRUE]<-'Si'
+tabla[tabla == FALSE]<-'No'
+
+knitr::kable(tabla, caption = "Variables selccionadas en los 5 mejores modelos",
+             digits = 3, format.args = list(big.mark = ","))
+```
+\normalsize
+
+Con base a la anterior, el mejor modelo obtuvo un estadístico AIC de `r mod_5[1, "Criterion"]`, dicho modelo contempla a las variables predictoras URBANA, TIPACCID y EDAD. Los coeficientes de regresión estimados se muestran a continuación:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# Se realizan los conteos
+conteo_mej<-sqldf('SELECT URBANA, TIPACCID, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento
+GROUP BY URBANA, TIPACCID, EDAD')
+
+# Se ajusta el modelo logístico
+modelo_mej<-glm(cbind(conteo_mej$exitos, conteo_mej$fracasos) ~ URBANA + TIPACCID + EDAD, data = conteo_mej,
+family = binomial(link = logit))
+summary(modelo_mej)
+modelo_r2_mej<-1 - modelo_mej$deviance/modelo_mej$null.deviance
+
+```
+
+Como se puede observar en la salida anterior, el modelo arroja 6 variables significativas, además del intercepto. 
+Revisando los coeficientes de regresión se tiene lo siguiente:
+
+1.- Para las variables urbana1 (Accidente en intersección) y urbana2 (Accidente en no intersección), los coeficientes son $\hat{\beta}_{urbana1} =  -3.83146$ y $\hat{\beta}_{urbana2} =  -4.33351$, respectivamente, al ser negativos disminuyen la probabilidad de éxito. Lo mismo ocurre con la variable EDAD.\
+2.- Para los niveles de la variable TIPACCID todos sus $\hat\beta_{tipaccid} > 0$, entonces, aumentan la probabilidad de éxito.
+El coeficiente de determinación ($R^{2}$) arroja un valor de `r modelo_r2_mej`, es decir, aproximadamente el `r round(modelo_r2_mej*100, 2)`% de la variación en la variable de respuesta, se debe a las variables predictoras del modelo que se ha ajustado.
+
+### 3.4 Análisis de datos irregulares 
+
+El siguiente paso fue analizar si existen datos atípicos o de alto apalancamiento en el modelo que incluye a las variables URBANA, TIPACCID y EDAD.
+
+Para decidir qué tan desviado deber ser un residual para ser considerado atípico, se pueden emplear los residuales estandarizados de Pearson, valores menores a -3 y mayores a 3 se consideran irregulares. 
+
+El siguiente gráfico muestra los valores ajustados vs residuales estandarizados de Pearson.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '90%', out.height = '90%', fig.align = "center", fig.cap = "Análisis de datos atípicos"}
+
+# Datos atípicos con el gráfico de valores ajustados vs residuales estandarizados
+r_est<-residuals(modelo_mej, type = "pearson")/sqrt(1 - hatvalues(modelo_mej))
+plot(predict(modelo_mej, type = "response"), r_est, xlab = "Valores ajustados", ylab = "Residuales estandarizados de Pearson", 
+     main = "Análisis de residuales", ylim = c(min(r_est) - 1, max(r_est) + 1))
+abline(h = c(-3, 3), col = "red", lty = 2)
+
+# Valores mayores o menores a la cota 3 o -3
+Atipico<-which(r_est >= 3 | r_est <= -3)
+
+# Datos con alta palanca
+hii<-hatvalues(modelo_mej)
+
+# Cota 4(p+1)/n
+n_ent<-nrow(entrenamiento)  
+var_coef<-length(modelo_mej$coefficients)
+cota<-4*(var_coef)/n_ent
+
+# ¿Cuáles son mayores a la cota?
+alta_palanca<-which(hii>cota)
+
+# Tabla resumen
+tabla_ati<-data.frame(TIPO = c("Atípicos", "Alta palanca"), 
+                      OBS = c("59, 76, 168, 169 y 183", "32, 33, 158, 161, 162, 163, 164, 165, 166, 193, 214, 220, 221, 222, 223, 235, 246 y 247"))
+```
+
+En el gráfico anterior, se puede observar que `r length(Atipico)` observaciones sobrepasan el límite de -3 o 3, por lo que podrían considerarse como datos atípicos.
+
+En cuanto al análisis para datos con alta palanca, se determinan que valores $h_{ii}$ (matriz sombrero) son mayores a la medida 4(p + 1)/n, en donde p es el número de variables predictoras del modelo ajustado y n es el número de observaciones. Al efectuar el cálculo en R, se tienen `r length(alta_palanca)` observaciones que se consideran de alta palanca.
+
+El resultado del análisis de datos atípicos y para datos de alta palanca se resume en la siguiente tabla:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+knitr::kable(tabla_ati, caption = "Datos atípicos y de alto apalancamiento",
+             digits = 3, format.args = list(big.mark = ","), 
+             col.names = c("Tipo", "Número de observación"))
+```
+
+Para eliminar datos atípicos y de alto apalancamiento es necesario conocer más información con respecto a la base, por ejemplo, si no hubo un error de captura en ese registro. No obstante, para fines del estudio, se optó por descartar dichos datos y ajustar nuevamente el modelo.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# Datos sin atípicos ni alto apalancamiento
+entrenamiento_f<-entrenamiento[-c(Atipico, alta_palanca), ]
+
+# Se realizan los conteos
+conteo_mej_f<-sqldf('SELECT URBANA, TIPACCID, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento_f
+GROUP BY URBANA, TIPACCID, EDAD')
+
+# Se ajusta el modelo logístico
+modelo_mej_f<-glm(cbind(conteo_mej_f$exitos, conteo_mej_f$fracasos) ~ URBANA + TIPACCID + EDAD, data = conteo_mej_f,
+family = binomial(link = logit))
+summary(modelo_mej_f)
+modelo_r2_mej_f<-1 - modelo_mej_f$deviance/modelo_mej_f$null.deviance
+```
+
+Al comparar este modelo sin datos irregulares con el que sí los contiene, se puede observar que se mantiene el mismo número de variables significativas, así como el nivel de significancia. De igual forma, el intercepto es significativo, también se conservan los signos de los coeficientes de regresión estimados.
+
+El coeficiente de determinación ($R^{2}$), disminuyó un poco con respecto al anterior, ahora arroja un valor de `r modelo_r2_mej_f`, es decir, aproximadamente el `r round(modelo_r2_mej_f*100, 2)`% de la variación en la variable de respuesta, se debe a las variables predictoras del modelo que se ha ajustado.
+
+### 3.5 Análisis de los supuestos del modelo
+
+La siguiente parte del análisis consiste en revisar los supuestos del modelo mediante el análisis de residuales, para ello se realizaron los gráficos de los residuales del modelo.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE, out.width = '90%', out.height = '90%', fig.align = "center", fig.cap = "Análisis de residuales"}
+# Análisis de residuales
+par(mfrow = c(2, 2))
+plot(modelo_mej_f)
+```
+
+La interpretación de la gráfica es la siguiente:
+
+1.- Residuals vs Fitted: Se observa en la gráfica que existe cierta aleatoriedad, lo que indica que el modelo se ajusta medianamente.\
+2.- Normal Q-Q: Como podemos observar en el gráfico de qq plot los residuales cumplen el supuesto de normalidad, pues la mayoría están en el rango de [-2, 2], que es donde se concentra aproximadamente el 95% de la densidad de una distribución normal estándar.\
+3.-Scale-Location: En este gráfico se visualiza que a pesar de que la línea roja no es recta, los datos no siguen un patrón en particular, por lo que podemos pensar en que se cumple el supuesto de homocedasticidad.\
+4.- Residuals vs Leverage: Como muestra en el gráfico ninguna observación cae fuera de las distancias de Cook, por tanto no se aprecian puntos influyentes (alta palanca) en nuestro modelo de regresión.
+
+### 3.6 Predicciones 
+
+Adicionalmente, se realizaron 2 predicciones con sus respectivos intervalos de confianza al 95% para dos observaciones, una de ellas contiene URBANA = "1", TIPACCID = "1" y EDAD = 50; la otra con los valores de URBANA = "0", TIPACCID = "1", EDAD = 20. Los resultados fueron:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# Se generar algunas predicciones
+X0<-data.frame(URBANA = "1", TIPACCID = "1", EDAD = 50)
+add_ci(X0, modelo_mej_f, names = c("lwr", "upr"), alpha = 0.05)
+X0<-data.frame(URBANA = "0", TIPACCID = "1", EDAD = 20)
+add_ci(X0, modelo_mej_f, names = c("lwr", "upr"), alpha = 0.05)
+
+```
+
+Con base al modelo ajustado, para la observación 1 la estimación puntual de la predicción de la probabilidad es de 0.1374189, mientras que el intervalo de confianza al 95% es de (0.08161482, 0.2221493) y su interpretación es la siguiente, se tiene una confianza del 95% de que la probabilidad de un accidente fatal se encuentre entre 8.16% y 22.2% cuando las variables predictoras URBANA = 1 (Accidente en intersección), TIPACCID = 1 (Colisión con vehículo automotor) y EDAD = 50 (edad del responsable del accidente); se tiene una probabilidad baja de que ocurra un accidente fatal con estos valores de variables.
+
+En cambio, para la observación 2 la estimación puntual de la predicción de la probabilidad es de 0.9150434, mientras que el intervalo de confianza al 95% es de (0.7253847, 0.9777374) y su interpretación es la siguiente, se tiene una confianza del 95% de que la probabilidad de un accidente fatal se encuentre entre 72.5% y 97.8% cuando las variables predictoras URBANA = 0 (Accidente en zona suburbana), TIPACCID = 1 (Colisión con vehículo automotor) y EDAD = 50 (edad del responsable del accidente); se tiene una probabilidad alta de un accidente fatal con estos valores de variables.
+
+### 3.7 Ajuste de un modelo con regularización LASSO
+
+Para fines comparativos a cuanto el poder predictivo y de selección de variables, se optó por ajustar  un modelo de regresión lineal con regularización LASSO. Es importante mencionar que, se tomaron los mismos datos de entrenamiento que el modelo anterior y que se descartaron las variables EDO y HORA por el análisis de multicolinealidad que se realizó. El ajuste del modelo se presenta a continuación:
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# Modelo con regularización LASSO
+# Se cargan las librerías de interés
+library(glmnet)
+
+# Se preparan las variables
+X<-model.matrix(exito ~ MES + DIASEMANA + URBANA + TIPACCID + CAUSAACCI + CAPAROD + 
+                  SEXO + ALIENTO + CINTURON + EDAD, entrenamiento)[,-1]
+Y<-entrenamiento$exito
+
+#Fijamos una semilla y encontrar mejor lambda
+set.seed(12345) 
+cv.mlog<-cv.glmnet(X, Y, alpha = 1, family = "binomial")
+
+# Se obtiene el mejor lambda y los coeficientes del modelo
+mejor_lambda_lasso<-cv.mlog$lambda.min
+mlog_final_lasso<-glmnet(X, Y, alpha = 1, lambda = mejor_lambda_lasso)
+coef(mlog_final_lasso)
+
+```
+
+Como podemos observar en el modelo LASSO algunos coeficientes son exactamente igual a cero, a diferencia de los modelos con regularización Ridge en donde todas las variables predictoras se incluyen en el modelo final. Podemos ver el método de regularización LASSO como un método de selección de variables.
+
+Para seleccionar con qué método de selección de variables nos quedamos, tenemos que calcular el error de predicción, usando el conjunto de prueba.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# Se preparan las variables
+X_prueba<-model.matrix(exito ~ MES + DIASEMANA + URBANA + TIPACCID + CAUSAACCI + 
+                         CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, prueba)[,-1]
+Y_prueba<-prueba$exito
+
+# Obtenemos el error de predicción del modelo de regresión inicial y LASSO
+normal_pred<-predict(modelo_mej_f, newx = X_prueba)
+MSE_mean_n<-mean((normal_pred - Y_prueba)^2)
+lasso_pred<-predict(mlog_final_lasso, s = mejor_lambda_lasso, newx = X_prueba)
+MSE_mean_lasso<-mean((lasso_pred - Y_prueba)^2)
+
+# Se crea la tabla del ECM
+tabla_ecm<-data.frame(Modelo = c("Modelo inicial", "Modelo LASSO"), MSE = c(MSE_mean_n, MSE_mean_lasso))
+
+options(knitr.kable.NA = "--")
+knitr::kable(tabla_ecm, caption = "ECM para los modelos ajustados", 
+             col.names = c("Modelo ajustado", "ECM"),
+             digits = 3, format.args = list(big.mark = ","))
+```
+
+Con base a la anterior, el modelo lineal con regularización LASSO genera un menor error de predicción que el ajustado en un inicio. A diferencia del modelo ajusto en el apartado 3.4, en el modelo con regularización LASSO se incluye la variable ALIENTO, CINTURON, algunos niveles de la variables CAUSAACCI, DIASEMANA y MES; coinciden en la variable URBANA y EDAD, además también en algunos niveles de TIPACCID.
+
+## 4. Conclusiones
+
+Como aprendizaje se cree que lo más complicado no fue implementar códigos en R para ajustar modelos, sino que preparar los datos y encontrar un sentido fue lo más difícil del proyecto.
+
+En cuanto al modelo final ajustado, las variables seleccionadas fueron la edad del responsable (EDAD), el tipo de accidente (TIPACCID) y el tipo de zona urbana en donde ocurrió el accidente (URABANA). El coeficiente de determinación ($R^2$) para el modelo que no incluye datos irregulares (atípicos y de alto apalancamiento) fue de 54.27%
+
+En cuanto a los supuestos del modelo, es necesario explorar más documentación relacionada con modelos de regresión logística, ya que el análisis de residuales es más complicado que el que se presenta en un modelo de regresión lineal.
+
+Al comparar el modelo ajustado con el método de regularización LASSO, se obtuvo un menor error de predicción. Revisando las variables seleccionadas, se incluyen un mayor número, no obstante, coincide con las que se seleccionaron en el otro modelo ajustado.
+
+
+\newpage
+## Anexo. Código implementado en R
+```{r eval = FALSE}
+# Limpiar la memoria
+rm(list = ls())
+
+# Se cargan las librerías de interés
+library(sqldf)
+library(ISLR2)
+library(dplyr)
+library(foreign)
+library(DescTools)
+library(dplyr)
+library(corrplot)
+library(car)
+library(bestglm)
+library(ciTools)
+library(xlsx)
+library(glmnet)
+
+# Establecer dirección de trabajo
+setwd("C:/Regresión_log_ATUS")
+
+### Preparación de la base ###
+
+# Se cargan los datos de interés
+# Bd<-read.dbf(file = "atus_20.DBF", as.is = FALSE)
+
+# Se cargan los datos de interés
+Bd<-read.dbf(file = "atus_20.DBF", as.is = FALSE)
+
+# Se eliminan los datos con no especificado en alguna de las variables o 0 en TIPACCID
+Tr_se<-Bd[((Bd$HORA %in% 99) | (Bd$MINUTOS %in% 99) | (Bd$DIA %in% 32) | 
+           (Bd$DIASEMANA %in% c(0, 8)) | (Bd$TIPACCID %in% 0) | 
+           (Bd$CAUSAACCI %in% 0) | (Bd$CAPAROD %in% 0) | (Bd$SEXO %in% 0) | 
+           (Bd$ALIENTO %in% c(0, 6)) | (Bd$CINTURON %in% c(0, 9)) | 
+           (Bd$EDAD %in% 99)) == FALSE, ]
+
+## se cre la variable éxito 
+Tr_se[, "exito"]<-ifelse((Tr_se$CONDMUERTO > 0) | (Tr_se$PASAMUERTO > 0) | 
+                         (Tr_se$PEATMUERTO > 0) | (Tr_se$CICLMUERTO > 0) | 
+                         (Tr_se$OTROMUERTO > 0), 1, 0)
+
+# Se va a balancear el número de éxitos y fracasos de manera aleatoria
+Exito<-Tr_se[Tr_se$exito == 1, ]
+Fracaso<-Tr_se[Tr_se$exito == 0, ]
+set.seed(9959)
+Tr<-rbind(Exito[sample(1:nrow(Exito), 300), ], Fracaso[sample(1:nrow(Fracaso), 200), ])
+
+# Se carga la base de datos para el ajuste del modelo
+Tr<-read.xlsx(file = "Información del proyecto.xlsx", sheetName = "Base")
+
+# Se crea una copia de los datos para el análisis exploratorio
+Ae<-Tr
+
+# Se transforman las variables que deben ser factor
+Tr[, "EDO"]<-as.factor(Tr$EDO)
+Tr[, "MES"]<-as.factor(Tr$MES)
+Tr[, "HORA"]<-as.factor(Tr$HORA)
+Tr[, "DIASEMANA"]<-as.factor(Tr$DIASEMANA)
+Tr[, "URBANA"]<-as.factor(Tr$URBANA)
+Tr[, "SUBURBANA"]<-as.factor(Tr$SUBURBANA)
+Tr[, "TIPACCID"]<-as.factor(Tr$TIPACCID)
+Tr[, "CAUSAACCI"]<-as.factor(Tr$CAUSAACCI)
+Tr[, "CAPAROD"]<-as.factor(Tr$CAPAROD)
+Tr[, "SEXO"]<-as.factor(Tr$SEXO)
+Tr[, "ALIENTO"]<-as.factor(Tr$ALIENTO)
+Tr[, "CINTURON"]<-as.factor(Tr$CINTURON)
+
+# Datos de entrenamiento y de prueba
+n<-nrow(Tr)
+set.seed(20)
+muestra<-sample(1:n, size = round(0.75*n), replace = FALSE)
+entrenamiento<-Tr[muestra, ]
+prueba<-Tr[-muestra, ]
+
+### Análisis exploratorio ###
+
+###### Gráfico 1
+
+# Se convierte a numérica la variable HORA
+Ae[, "HORA"]<-as.numeric(Ar$HORA)
+# Se crea la consulta
+consulta<-sqldf('SELECT *, CASE 
+                           WHEN HORA >= 19 AND HORA <= 22 THEN "19-22"
+                           WHEN HORA >= 15 AND HORA <= 18 THEN "15-18"
+                           WHEN HORA >= 11 AND HORA <= 14 THEN "11-14"
+                           WHEN HORA >=  6 AND HORA <= 10 THEN "06-10"
+                           WHEN HORA >=  2 AND HORA <=  5 THEN "02-05"
+                           ELSE "23-02"
+                           END AS HORA_C
+                 FROM Ae')
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, HORA_C, COUNT(exito) as CONTEO
+             FROM consulta
+             WHERE exito = 1
+             GROUP BY exito, HORA_C')
+total<-sum(prop$CONTEO)
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$HORA_C, col = "#69b3a2",
+        horiz = T, las = 1, xlab = "Porcentaje", ylab = "Horarios", 
+        main = "Porcentaje de accidentes fatales por horarios", xlim = c(0, 25))
+box()
+
+###### Gráfico 2
+
+# Se crea la consulta
+consulta<-sqldf('SELECT *, CASE 
+                           WHEN EDAD <= 15 THEN "15 o menos"
+                           WHEN EDAD >= 16 AND EDAD <= 30 THEN "16-30"
+                           WHEN EDAD >= 31 AND EDAD <= 45 THEN "31-45" 
+                           WHEN EDAD >= 46 AND EDAD <= 60 THEN "46-60" 
+                           ELSE "61 o más"
+                           END AS EDAD_C
+                 FROM Ae')
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, EDAD_C, COUNT(exito) as CONTEO
+             FROM consulta
+             WHERE exito = 1
+             GROUP BY exito, EDAD_C')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$EDAD_C, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", 
+        xlab = "Edad del responsable del accidente fatal", 
+        main = "Porcentaje de personas responsables por edad", ylim = c(0, 45))
+box()
+
+###### Gráfico 3
+
+# Se hace numérica la variable EDO
+Ae[, "EDO"]<-as.numeric(Ar$EDO)
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, EDO, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, EDO
+             ORDER BY EDO')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = prop$EDO, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", 
+        xlab = "Clave de entidad federativa", 
+        main = "Porcentaje de accidentes fatales por estado", ylim = c(0, 20))
+box()
+
+##### Gráfico 4
+# Se hace numérica la variable TIPACCID
+Ae[, "TIPACCID"]<-as.numeric(Ar$TIPACCID)
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, TIPACCID, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, TIPACCID
+             ORDER BY TIPACCID')
+
+# Se crea el gráfico de barras
+nombre<-c("C. automot.", "C. peatón", "C. animal",
+          "C. objeto", "Volcadura", "C. Pasajero",
+          "Salida cam.", "C. ferro.",
+          "C. moto", "C. ciclista", "Otro")
+barplot(height = prop$CONTEO*100/300, cex.names = 0.68,
+        names = nombre, col = "#69b3a2",
+        horiz = T, las = 1, xlab = "Porcentaje", ylab = "", 
+        main = "Porcentaje de accidentes fatales por tipo de accidente", 
+        xlim = c(0, 20))
+box()
+
+#### Gráfico 5
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, URBANA, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, URBANA
+             ORDER BY URBANA')
+
+# Se crea el gráfico de barras
+nombre<-c("Zona suburbana", "En intersección", "No intersección")
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = nombre, col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Zona urbana", 
+        main = "Porcentaje de accidentes según zona urbana", ylim = c(0, 60))
+box()
+
+#### Gráfico 6 y 7
+par(mfrow = c(1, 2))
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, CINTURON, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, CINTURON
+             ORDER BY CINTURON')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = c("Sí", "No"), col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", 
+        xlab = "Uso de cinturón de seguridad", 
+        main = "Uso de cinturón", ylim = c(0, 90))
+box()
+
+# Se crean las proporciones
+prop<-sqldf('SELECT exito, ALIENTO, COUNT(exito) as CONTEO
+             FROM Ae
+             WHERE exito = 1
+             GROUP BY exito, ALIENTO
+             ORDER BY ALIENTO')
+
+# Se crea el gráfico de barras
+barplot(height = prop$CONTEO*100/300, cex.names = 0.8,
+        names = c("Sí", "No"), col = "#69b3a2",
+        horiz = FALSE, las = 1, ylab = "Porcentaje", xlab = "Aliento alcohólico", 
+        main = "Aliento alcohólico", ylim = c(0, 90))
+
+### Ajuste del modelo ###
+
+# Se realizan los conteos
+conteo<-sqldf('SELECT EDO, MES, HORA, DIASEMANA, URBANA, TIPACCID,
+CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento
+GROUP BY EDO, MES, HORA, DIASEMANA, URBANA, TIPACCID,
+CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD')
+
+# Se ajusta el modelo logístico
+modelo<-glm(cbind(conteo$exitos, conteo$fracasos) ~ EDO + MES + HORA + 
+              DIASEMANA + URBANA + TIPACCID +
+CAUSAACCI + CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# ¿Al menos alguna variable está relacionada con la respuesta?
+dif_dev<-modelo$null.deviance - modelo$deviance
+gl<-modelo$df.null - modelo$df.residual
+valor_p<-pchisq(dif_dev, df = gl, lower.tail = FALSE)*2
+modelo_r2<-1 - modelo$deviance/modelo$null.deviance
+summary(modelo)
+
+# Análisis de multicolinealidad
+# Modelo 2 sin la variable HORA
+# Se ajusta el modelo logístico
+modelo_2<-glm(cbind(conteo$exitos, conteo$fracasos) ~ EDO + MES + DIASEMANA + 
+                URBANA + TIPACCID + CAUSAACCI + CAPAROD + SEXO + ALIENTO + 
+                CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# Modelo 3 sin la variable HORA y EDO
+# Se ajusta el modelo logístico
+modelo_3<-glm(cbind(conteo$exitos, conteo$fracasos) ~ MES + DIASEMANA + 
+                URBANA + TIPACCID + CAUSAACCI + CAPAROD + SEXO + ALIENTO + 
+                CINTURON + EDAD, data = conteo,
+family = binomial(link = logit))
+
+# Valores VIF
+Valores<-vif(modelo)
+Valores_2<-vif(modelo_2)
+Valores_3<-vif(modelo_3)
+
+# Variables de interés
+Interes<-c("exito", "EDO", "MES", "HORA", "DIASEMANA", "URBANA", "TIPACCID", 
+           "CAUSAACCI", "CAPAROD", "SEXO", "ALIENTO", "CINTURON", "EDAD")
+ent_mat<-sapply(entrenamiento[, Interes], function(x) as.numeric(x))
+
+# Se crea la matriz de correlaciones y se gráfica
+corrplot(cor(ent_mat), method = "number", type = "lower", number.cex = 0.5,
+         tl.col = "black", col = COL1('YlOrBr', 200), tl.cex = 0.8, 
+         title = "Correlaciones lineales", 
+         mar = c(0, 0, 1, 0))
+
+# Se crea la ventana de 1X3
+par(mfrow = c(1, 3))
+
+# Se crea un barplot del modelo inicial
+barplot(Valores[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", main = "Modelo 1")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+# Se crea un barplot del modelo 2
+barplot(Valores_2[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", main = "Modelo 2")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+# Se crea un barplot del modelo 3
+barplot(Valores_3[, 1], horiz = TRUE, col = "steelblue", axes = TRUE, cex.names = 0.57,
+las = 2, xlab = "VIF", ylab = "", xlim = c(0, 12), main = "Modelo 3")
+box()
+abline(v = 10, lwd = 2, lty = 2, col = "red")
+
+# Seleccionar el mejor subconjunto de variables
+x<-entrenamiento %>% select(c(MES, DIASEMANA, URBANA, TIPACCID, 
+                                CAUSAACCI, CAPAROD, SEXO, ALIENTO, CINTURON, EDAD))
+# La variable respuesta debe ir al final
+y<-entrenamiento %>% select(exito) 
+xy<-cbind(x, y)
+
+# Seleccionar los 5 mejores modelos
+# Se usa la función bestglm (usando AIC), mejor poder predictivo.
+glm_com<-bestglm(Xy = xy, family = binomial, IC = "AIC", method = "exhaustive")
+# Se listan los 5 mejores modelos
+mod_5<-glm_com$BestModels
+
+# Se realizan los conteos
+conteo_mej<-sqldf('SELECT URBANA, TIPACCID, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento
+GROUP BY URBANA, TIPACCID, EDAD')
+
+# Se ajusta el modelo logístico
+modelo_mej<-glm(cbind(conteo_mej$exitos, conteo_mej$fracasos) ~ URBANA + 
+                  TIPACCID + EDAD, data = conteo_mej,
+family = binomial(link = logit))
+summary(modelo_mej)
+modelo_r2_mej<-1 - modelo_mej$deviance/modelo_mej$null.deviance
+
+# Datos atípicos con el gráfico de valores ajustados vs residuales estandarizados
+r_est<-residuals(modelo_mej, type = "pearson")/sqrt(1 - hatvalues(modelo_mej))
+plot(predict(modelo_mej, type = "response"), r_est, xlab = "Valores ajustados", 
+     ylab = "Residuales estandarizados de Pearson", 
+     main = "Análisis de residuales", ylim = c(min(r_est) - 1, max(r_est) + 1))
+abline(h = c(-3, 3), col = "red", lty = 2)
+
+# Valores mayores o menores a la cota 3 o -3
+Atipico<-which(r_est >= 3 | r_est <= -3)
+
+# Datos con alta palanca
+hii<-hatvalues(modelo_mej)
+
+# Cota 4(p+1)/n
+n_ent<-nrow(entrenamiento)  
+var_coef<-length(modelo_mej$coefficients)
+cota<-4*(var_coef)/n_ent
+
+# ¿Cuáles son mayores a la cota?
+alta_palanca<-which(hii>cota)
+
+# Datos sin atípicos ni alto apalancamiento
+entrenamiento_f<-entrenamiento[-c(Atipico, alta_palanca), ]
+
+# Se realizan los conteos
+conteo_mej_f<-sqldf('SELECT URBANA, TIPACCID, EDAD, 
+COUNT(exito) AS ensayos, SUM(exito) AS exitos,
+SUM(fracaso) AS fracasos, SUM(exito)*1.0/COUNT(exito) AS prop_exitos,
+SUM(fracaso)*1.0/COUNT(exito) AS prop_fracasos
+FROM entrenamiento_f
+GROUP BY URBANA, TIPACCID, EDAD')
+
+# Se ajusta el modelo logístico
+modelo_mej_f<-glm(cbind(conteo_mej_f$exitos, conteo_mej_f$fracasos) ~ URBANA + 
+                    TIPACCID + EDAD, data = conteo_mej_f,
+family = binomial(link = logit))
+summary(modelo_mej_f)
+modelo_r2_mej_f<-1 - modelo_mej_f$deviance/modelo_mej_f$null.deviance
+
+# Análisis de residuales
+par(mfrow = c(2, 2))
+plot(modelo_mej_f)
+
+# Se generar algunas predicciones
+X0<-data.frame(URBANA = "1", TIPACCID = "1", EDAD = 50)
+add_ci(X0, modelo_mej_f, names = c("lwr", "upr"), alpha = 0.05)
+X0<-data.frame(URBANA = "0", TIPACCID = "1", EDAD = 20)
+add_ci(X0, modelo_mej_f, names = c("lwr", "upr"), alpha = 0.05)
+
+# Modelo con regularización LASSO
+# Se cargan las librerías de interés
+library(glmnet)
+
+# Se preparan las variables
+X<-model.matrix(exito ~ MES + DIASEMANA + URBANA + TIPACCID + CAUSAACCI + CAPAROD + 
+                  SEXO + ALIENTO + CINTURON + EDAD, entrenamiento)[,-1]
+Y<-entrenamiento$exito
+
+#Fijamos una semilla y encontrar mejor lambda
+set.seed(12345) 
+cv.mlog<-cv.glmnet(X, Y, alpha = 1, family = "binomial")
+
+# Se obtiene el mejor lambda y los coeficientes del modelo
+mejor_lambda_lasso<-cv.mlog$lambda.min
+mlog_final_lasso<-glmnet(X, Y, alpha = 1, lambda = mejor_lambda_lasso)
+coef(mlog_final_lasso)
+
+# Se preparan las variables
+X_prueba<-model.matrix(exito ~ MES + DIASEMANA + URBANA + TIPACCID + CAUSAACCI + 
+                         CAPAROD + SEXO + ALIENTO + CINTURON + EDAD, prueba)[,-1]
+Y_prueba<-prueba$exito
+
+# Obtenemos el error de predicción del modelo de regresión inicial y LASSO
+normal_pred<-predict(modelo_mej_f, newx = X_prueba)
+MSE_mean_n<-mean((normal_pred - Y_prueba)^2)
+lasso_pred<-predict(mlog_final_lasso, s = mejor_lambda_lasso, newx = X_prueba)
+MSE_mean_lasso<-mean((lasso_pred - Y_prueba)^2)
+
+```
+
